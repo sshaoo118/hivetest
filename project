@@ -1,0 +1,580 @@
+
+load data inpath '/video_etl' into table gulivideo_ori;
+insert overwrite table gulivideo_orc
+select * from gulivideo_ori;
+
+create table gulivideo_ori(
+    videoId string,             //vedioID
+    uploader string,            //上传者
+    age int,                    //视频年龄
+    category array<string>,     //视频类别
+    length int,                 //长度
+    views int,                  //观看次数
+    rate float,                 //评分
+    ratings int,                //流量 
+    comments int,               //评论数
+    relatedId array<string>)    //相关视频
+row format delimited 
+fields terminated by "\t"
+collection items terminated by "&"
+stored as textfile;
+
+1 统计视频观看数Top10
+select videoId, views
+from gulivideo_orc
+order by views desc
+limit 10;
+
++--------------+-----------+--+
+|   videoid    |   views   |
++--------------+-----------+--+
+| dMH0bHeiRNg  | 42513417  |
+| 0XxI-hvPRRA  | 20282464  |
+| 1dmVU08zVpA  | 16087899  |
+| RB-wUgnyGv0  | 15712924  |
+| QjA5faZF1A8  | 15256922  |
+| -_CSo1gOd48  | 13199833  |
+| 49IDp76kjPw  | 11970018  |
+| tYnn51C3X_w  | 11823701  |
+| pv5zWaTEVkI  | 11672017  |
+| D2kJZOfq7zk  | 11184051  |
++--------------+-----------+--+
+
+2 统计视频类别热度Top10
+类别热度衡量：根据类别下的视频个数
+t1:类别炸开
+select explode(category) category_info
+from gulivideo_orc
+
+t2:
+select category_info, count(*) hot
+from t1
+group by category_info
+order by hot desc
+limit 10;
+
+select category_info, count(*) hot
+from (
+select explode(category) category_info
+from gulivideo_orc
+)t1
+group by category_info
+order by hot desc
+limit 10;
+
++----------------+---------+--+
+| category_info  |   hot   |
++----------------+---------+--+
+| Music          | 179049  |
+| Entertainment  | 127674  |
+| Comedy         | 87818   |
+| Animation      | 73293   |
+| Film           | 73293   |
+| Sports         | 67329   |
+| Gadgets        | 59817   |
+| Games          | 59817   |
+| Blogs          | 48890   |
+| People         | 48890   |
++----------------+---------+--+
+
+3 统计出视频观看数最高的20个视频的所属类别以及类别包含Top20视频的个数
+
+t1:统计出视频观看数最高的20个视频的所属类别
+select videoId, views, category
+from gulivideo_orc
+order by views desc
+limit 20;
+
+t2:炸开类别
+select explode(category) category_info
+from t1;
+
+t3:按类别分组聚合
+select category_info, count(*)
+from t2
+group by category_info;
+
+select category_info, count(*)
+from (
+select explode(category) category_info
+from (
+select videoId, views, category
+from gulivideo_orc
+order by views desc
+limit 20
+)t1
+)t2
+group by category_info;
+
++----------------+------+--+
+| category_info  | _c1  |
++----------------+------+--+
+| Blogs          | 2    |
+| Comedy         | 6    |
+| Entertainment  | 6    |
+| Music          | 5    |
+| People         | 2    |
+| UNA            | 1    |
++----------------+------+--+
+
+
+4 统计视频观看数Top50所关联视频的所属类别排序
+
+t1:Top50所关联视频
+select videoId, views, relatedId
+from gulivideo_orc
+order by views desc
+limit 50;
+
+t2:炸开关联视频
+select explode(relatedId)
+from t1;
+
+去重后：
+select distinct relatedId_info
+from t1
+lateral view explode(relatedId) temp_tbl as relatedId_info
+
+t3:t2表和gulivideo_orc进行join，得到所属类别
+select go.videoId, go.category
+from t2
+join gulivideo_orc go
+on t2.relatedId_info = go.videoid;
+
+t4:炸开类别
+select explode(category) category_info
+from t3
+
+t5:按照类别分组聚合排序
+select category_info, count(*) hot
+from t4
+group by category_info
+order by hot desc;
+
+
+select category_info, count(*) hot
+from (
+select explode(category) category_info
+from (
+select go.videoId, go.category
+from (
+select distinct relatedId_info
+from (
+select videoId, views, relatedId
+from gulivideo_orc
+order by views desc
+limit 50
+)t1
+lateral view explode(relatedId) temp_tbl as relatedId_info
+)t2
+join gulivideo_orc go
+on t2.relatedId_info = go.videoid
+)t3
+)t4
+group by category_info
+order by hot desc;
+
++----------------+------+--+
+| category_info  | hot  |
++----------------+------+--+
+| Comedy         | 232  |
+| Entertainment  | 216  |
+| Music          | 195  |
+| Blogs          | 51   |
+| People         | 51   |
+| Film           | 47   |
+| Animation      | 47   |
+| News           | 22   |
+| Politics       | 22   |
+| Games          | 20   |
+| Gadgets        | 20   |
+| Sports         | 19   |
+| Howto          | 14   |
+| DIY            | 14   |
+| UNA            | 13   |
+| Places         | 12   |
+| Travel         | 12   |
+| Animals        | 11   |
+| Pets           | 11   |
+| Autos          | 4    |
+| Vehicles       | 4    |
++----------------+------+--+
+
+
+
+create table gulivideo_category(
+    videoId string, 
+    uploader string, 
+    age int, 
+    categoryId string, 
+    length int, 
+    views int, 
+    rate float, 
+    ratings int, 
+    comments int, 
+    relatedId array<string>)
+row format delimited 
+fields terminated by "\t" 
+collection items terminated by "&" 
+stored as orc;
+
+
+insert into table gulivideo_category  
+    select 
+        videoId,
+        uploader,
+        age,
+        categoryId,
+        length,
+        views,
+        rate,
+        ratings,
+        comments,
+        relatedId 
+    from 
+        gulivideo_orc lateral view explode(category) catetory as categoryId;
+
+
+5 统计每个类别中的视频热度Top10，以Music为例
+select categoryId, videoid, views
+from gulivideo_category
+where categoryId = 'Music'
+order by views desc
+limit 10;
+
++-------------+--------------+-----------+--+
+| categoryid  |   videoid    |   views   |
++-------------+--------------+-----------+--+
+| Music       | QjA5faZF1A8  | 15256922  |
+| Music       | tYnn51C3X_w  | 11823701  |
+| Music       | pv5zWaTEVkI  | 11672017  |
+| Music       | 8bbTtPL1jRs  | 9579911   |
+| Music       | UMf40daefsI  | 7533070   |
+| Music       | -xEzGIuY7kw  | 6946033   |
+| Music       | d6C0bNDqf3Y  | 6935578   |
+| Music       | HSoVKUVOnfQ  | 6193057   |
+| Music       | 3URfWTEPmtE  | 5581171   |
+| Music       | thtmaZnxk_0  | 5142238   |
++-------------+--------------+-----------+--+
+
+6 统计每个类别中视频流量Top10，以Music为例
+
+select categoryId, videoid, ratings
+from gulivideo_category
+where categoryId = 'Music'
+order by ratings desc
+limit 10;
+
++-------------+--------------+----------+--+
+| categoryid  |   videoid    | ratings  |
++-------------+--------------+----------+--+
+| Music       | QjA5faZF1A8  | 120506   |
+| Music       | pv5zWaTEVkI  | 42386    |
+| Music       | UMf40daefsI  | 31886    |
+| Music       | tYnn51C3X_w  | 29479    |
+| Music       | 59ZX5qdIEB0  | 21481    |
+| Music       | FLn45-7Pn2Y  | 21249    |
+| Music       | -xEzGIuY7kw  | 20828    |
+| Music       | HSoVKUVOnfQ  | 19803    |
+| Music       | ARHyRI9_NB4  | 19243    |
+| Music       | gg5_mlQOsUQ  | 19190    |
++-------------+--------------+----------+--+
+
+7 统计上传视频最多的用户Top10以及他们上传的观看次数在前20的视频
+
+create table gulivideo_user_ori(
+    uploader string,
+    videos int,
+    friends int)
+row format delimited 
+fields terminated by "\t" 
+stored as textfile;
+
+t1:上传视频最多的用户Top10
+select uploader, videos
+from gulivideo_user_orc
+order by videos desc
+limit 10;
+
+t2：t1 join gulivideo_orc 获取到 观看次数在前20的视频
+select go.videoId, go.views, go.uploader
+from t1
+join gulivideo_orc go
+on t1.uploader = go.uploader
+order by go.views desc
+limit 20;
+
+select go.videoId, go.views, go.uploader
+from (
+select uploader, videos
+from gulivideo_user_orc
+order by videos desc
+limit 10
+)t1
+join gulivideo_orc go
+on t1.uploader = go.uploader
+order by go.views desc
+limit 20;
++--------------+-----------+----------------+--+
+|  go.videoid  | go.views  |  go.uploader   |
++--------------+-----------+----------------+--+
+| -IxHBW0YpZw  | 39059     | expertvillage  |
+| BU-fT5XI_8I  | 29975     | expertvillage  |
+| ADOcaBYbMl0  | 26270     | expertvillage  |
+| yAqsULIDJFE  | 25511     | expertvillage  |
+| vcm-t0TJXNg  | 25366     | expertvillage  |
+| 0KYGFawp14c  | 24659     | expertvillage  |
+| j4DpuPvMLF4  | 22593     | expertvillage  |
+| Msu4lZb2oeQ  | 18822     | expertvillage  |
+| ZHZVj44rpjE  | 16304     | expertvillage  |
+| foATQY3wovI  | 13576     | expertvillage  |
+| -UnQ8rcBOQs  | 13450     | expertvillage  |
+| crtNd46CDks  | 11639     | expertvillage  |
+| D1leA0JKHhE  | 11553     | expertvillage  |
+| NJu2oG1Wm98  | 11452     | expertvillage  |
+| CapbXdyv4j4  | 10915     | expertvillage  |
+| epr5erraEp4  | 10817     | expertvillage  |
+| IyQoDgaLM7U  | 10597     | expertvillage  |
+| tbZibBnusLQ  | 10402     | expertvillage  |
+| _GnCHodc7mk  | 9422      | expertvillage  |
+| hvEYlSlRitU  | 7123      | expertvillage  |
++--------------+-----------+----------------+--+
+
+8 统计每个类别视频观看数Top10
+t1:
+select videoid, categoryId, views, row_number() over(partition by categoryId order by views desc) rank
+from gulivideo_category
+
+t2:
+select videoid, categoryId, views,rank
+from t1
+where rank <= 10;
+
+select videoid, categoryId, views,rank
+from (
+select videoid, categoryId, views, row_number() over(partition by categoryId order by views desc) rank
+from gulivideo_category
+)t1
+where rank <= 10;
+
++--------------+----------------+-----------+-------+--+
+|   videoid    |   categoryid   |   views   | rank  |
++--------------+----------------+-----------+-------+--+
+| 2GWPOPSXGYI  | Animals        | 3660009   | 1     |
+| xmsV9R8FsDA  | Animals        | 3164582   | 2     |
+| 12PsUW-8ge4  | Animals        | 3133523   | 3     |
+| OeNggIGSKH8  | Animals        | 2457750   | 4     |
+| WofFb_eOxxA  | Animals        | 2075728   | 5     |
+| AgEmZ39EtFk  | Animals        | 1999469   | 6     |
+| a-gW3RbJd8U  | Animals        | 1836870   | 7     |
+| 8CL2hetqpfg  | Animals        | 1646808   | 8     |
+| QmroaYVD_so  | Animals        | 1645984   | 9     |
+| Sg9x5mUjbH8  | Animals        | 1527238   | 10    |
+| sdUUx5FdySs  | Animation      | 5840839   | 1     |
+| 6B26asyGKDo  | Animation      | 5147533   | 2     |
+| H20dhY01Xjk  | Animation      | 3772116   | 3     |
+| 55YYaJIrmzo  | Animation      | 3356163   | 4     |
+| JzqumbhfxRo  | Animation      | 3230774   | 5     |
+| eAhfZUZiwSE  | Animation      | 3114215   | 6     |
+| h7svw0m-wO0  | Animation      | 2866490   | 7     |
+| tAq3hWBlalU  | Animation      | 2830024   | 8     |
+| AJzU3NjDikY  | Animation      | 2569611   | 9     |
+| ElrldD02if0  | Animation      | 2337238   | 10    |
+| RjrEQaG5jPM  | Autos          | 2803140   | 1     |
+| cv157ZIInUk  | Autos          | 2773979   | 2     |
+| Gyg9U1YaVk8  | Autos          | 1832224   | 3     |
+| 6GNB7xT3rNE  | Autos          | 1412497   | 4     |
+| tth9krDtxII  | Autos          | 1347317   | 5     |
+| 46LQd9dXFRU  | Autos          | 1262173   | 6     |
+| pdiuDXwgrjQ  | Autos          | 1013697   | 7     |
+| kY_cDpENQLE  | Autos          | 956665    | 8     |
+| YtxfbxGz1u4  | Autos          | 942604    | 9     |
+| aCamHfJwSGU  | Autos          | 847442    | 10    |
+| -_CSo1gOd48  | Blogs          | 13199833  | 1     |
+| D2kJZOfq7zk  | Blogs          | 11184051  | 2     |
+| pa_7P5AbUww  | Blogs          | 5705136   | 3     |
+| f4B-r8KJhlE  | Blogs          | 4937616   | 4     |
+| LB84A3zcmVo  | Blogs          | 4866739   | 5     |
+| tXNquTYnyg0  | Blogs          | 3613323   | 6     |
+| EYppbbbSxjc  | Blogs          | 2896562   | 7     |
+| LH7vrLlDZ6U  | Blogs          | 2615359   | 8     |
+| bTV85fQhj0E  | Blogs          | 2192656   | 9     |
+| eVFF98kNg8Q  | Blogs          | 1813803   | 10    |
+| dMH0bHeiRNg  | Comedy         | 42513417  | 1     |
+| 0XxI-hvPRRA  | Comedy         | 20282464  | 2     |
+| 49IDp76kjPw  | Comedy         | 11970018  | 3     |
+| 5P6UU6m3cqk  | Comedy         | 10107491  | 4     |
+| _BuRwH59oAo  | Comedy         | 9566609   | 5     |
+| MNxwAU_xAMk  | Comedy         | 7066676   | 6     |
+| pYak2F1hUYA  | Comedy         | 6322117   | 7     |
+| h0zAlXr1UOs  | Comedy         | 5826923   | 8     |
+| C8rjr4jmWd0  | Comedy         | 5587299   | 9     |
+| R4cQ3BoHFas  | Comedy         | 5508079   | 10    |
+| hut3VRL5XRE  | DIY            | 2684989   | 1     |
+| YYTpb-QXV0k  | DIY            | 2492153   | 2     |
+| Pf3z935R37E  | DIY            | 2096661   | 3     |
+| Yd99gyE4jCk  | DIY            | 1918946   | 4     |
+| koQFjKwVFB0  | DIY            | 1757071   | 5     |
+| f5Fg6KFcOsU  | DIY            | 1751817   | 6     |
+| STQ3nhXuuEM  | DIY            | 1713974   | 7     |
+| FtKuBKIaVvs  | DIY            | 1520774   | 8     |
+| M0ODskdEPnQ  | DIY            | 1503351   | 9     |
+| uFwCk4UPtlM  | DIY            | 1500110   | 10    |
+| 1dmVU08zVpA  | Entertainment  | 16087899  | 1     |
+| RB-wUgnyGv0  | Entertainment  | 15712924  | 2     |
+| vr3x_RRJdd4  | Entertainment  | 10786529  | 3     |
+| lsO6D1rwrKc  | Entertainment  | 10334975  | 4     |
+| ixsZy2425eY  | Entertainment  | 7456875   | 5     |
+| RUCZJVJ_M8o  | Entertainment  | 6952767   | 6     |
+| tFXLbXyXy6M  | Entertainment  | 5810013   | 7     |
+| 7uwCEnDgd5o  | Entertainment  | 5280504   | 8     |
+| 2KrdBUFeFtY  | Entertainment  | 4676195   | 9     |
+| vD4OnHCRd_4  | Entertainment  | 4230610   | 10    |
+| sdUUx5FdySs  | Film           | 5840839   | 1     |
+| 6B26asyGKDo  | Film           | 5147533   | 2     |
+| H20dhY01Xjk  | Film           | 3772116   | 3     |
+| 55YYaJIrmzo  | Film           | 3356163   | 4     |
+| JzqumbhfxRo  | Film           | 3230774   | 5     |
+| eAhfZUZiwSE  | Film           | 3114215   | 6     |
+| h7svw0m-wO0  | Film           | 2866490   | 7     |
+| tAq3hWBlalU  | Film           | 2830024   | 8     |
+| AJzU3NjDikY  | Film           | 2569611   | 9     |
+| ElrldD02if0  | Film           | 2337238   | 10    |
+| pFlcqWQVVuU  | Gadgets        | 3651600   | 1     |
+| bcu8ZdJ2dQo  | Gadgets        | 2617568   | 2     |
+| -G7h626wJwM  | Gadgets        | 2565170   | 3     |
+| oMaTZFCLbq0  | Gadgets        | 2554620   | 4     |
+| GxSdKF5Fd38  | Gadgets        | 2468395   | 5     |
+| z1lj87UyvfY  | Gadgets        | 2373875   | 6     |
+| KhCmfX_PQ7E  | Gadgets        | 1967929   | 7     |
+| 2SVMFCZgvNM  | Gadgets        | 1813794   | 8     |
+| gPutYwiiE0o  | Gadgets        | 1633482   | 9     |
+| 7wt5FiZQrgM  | Gadgets        | 1399531   | 10    |
+| pFlcqWQVVuU  | Games          | 3651600   | 1     |
+| bcu8ZdJ2dQo  | Games          | 2617568   | 2     |
+| -G7h626wJwM  | Games          | 2565170   | 3     |
+| oMaTZFCLbq0  | Games          | 2554620   | 4     |
+| GxSdKF5Fd38  | Games          | 2468395   | 5     |
+| z1lj87UyvfY  | Games          | 2373875   | 6     |
+| KhCmfX_PQ7E  | Games          | 1967929   | 7     |
+| 2SVMFCZgvNM  | Games          | 1813794   | 8     |
+| gPutYwiiE0o  | Games          | 1633482   | 9     |
+| 7wt5FiZQrgM  | Games          | 1399531   | 10    |
++--------------+----------------+-----------+-------+--+
+|   videoid    |   categoryid   |   views   | rank  |
++--------------+----------------+-----------+-------+--+
+| hut3VRL5XRE  | Howto          | 2684989   | 1     |
+| YYTpb-QXV0k  | Howto          | 2492153   | 2     |
+| Pf3z935R37E  | Howto          | 2096661   | 3     |
+| Yd99gyE4jCk  | Howto          | 1918946   | 4     |
+| koQFjKwVFB0  | Howto          | 1757071   | 5     |
+| f5Fg6KFcOsU  | Howto          | 1751817   | 6     |
+| STQ3nhXuuEM  | Howto          | 1713974   | 7     |
+| FtKuBKIaVvs  | Howto          | 1520774   | 8     |
+| M0ODskdEPnQ  | Howto          | 1503351   | 9     |
+| uFwCk4UPtlM  | Howto          | 1500110   | 10    |
+| QjA5faZF1A8  | Music          | 15256922  | 1     |
+| tYnn51C3X_w  | Music          | 11823701  | 2     |
+| pv5zWaTEVkI  | Music          | 11672017  | 3     |
+| 8bbTtPL1jRs  | Music          | 9579911   | 4     |
+| UMf40daefsI  | Music          | 7533070   | 5     |
+| -xEzGIuY7kw  | Music          | 6946033   | 6     |
+| d6C0bNDqf3Y  | Music          | 6935578   | 7     |
+| HSoVKUVOnfQ  | Music          | 6193057   | 8     |
+| 3URfWTEPmtE  | Music          | 5581171   | 9     |
+| thtmaZnxk_0  | Music          | 5142238   | 10    |
+| hr23tpWX8lM  | News           | 4706030   | 1     |
+| YgW7or1TuFk  | News           | 2899397   | 2     |
+| nda_OSWeyn8  | News           | 2817078   | 3     |
+| 7SV2sfoPAY8  | News           | 2803520   | 4     |
+| HBa9wdOANHw  | News           | 2348709   | 5     |
+| xDh_pvv1tUM  | News           | 2335060   | 6     |
+| p_YMigZmUuk  | News           | 2326680   | 7     |
+| QCVxQ_3Ejkg  | News           | 2318782   | 8     |
+| a9WB_PXjTBo  | News           | 2310583   | 9     |
+| qSM_3fyiaxM  | News           | 2291369   | 10    |
+| -_CSo1gOd48  | People         | 13199833  | 1     |
+| D2kJZOfq7zk  | People         | 11184051  | 2     |
+| pa_7P5AbUww  | People         | 5705136   | 3     |
+| f4B-r8KJhlE  | People         | 4937616   | 4     |
+| LB84A3zcmVo  | People         | 4866739   | 5     |
+| tXNquTYnyg0  | People         | 3613323   | 6     |
+| EYppbbbSxjc  | People         | 2896562   | 7     |
+| LH7vrLlDZ6U  | People         | 2615359   | 8     |
+| bTV85fQhj0E  | People         | 2192656   | 9     |
+| eVFF98kNg8Q  | People         | 1813803   | 10    |
+| 2GWPOPSXGYI  | Pets           | 3660009   | 1     |
+| xmsV9R8FsDA  | Pets           | 3164582   | 2     |
+| 12PsUW-8ge4  | Pets           | 3133523   | 3     |
+| OeNggIGSKH8  | Pets           | 2457750   | 4     |
+| WofFb_eOxxA  | Pets           | 2075728   | 5     |
+| AgEmZ39EtFk  | Pets           | 1999469   | 6     |
+| a-gW3RbJd8U  | Pets           | 1836870   | 7     |
+| 8CL2hetqpfg  | Pets           | 1646808   | 8     |
+| QmroaYVD_so  | Pets           | 1645984   | 9     |
+| Sg9x5mUjbH8  | Pets           | 1527238   | 10    |
+| bNF_P281Uu4  | Places         | 5231539   | 1     |
+| s5ipz_0uC_U  | Places         | 1198840   | 2     |
+| 6jJW7aSNCzU  | Places         | 1143287   | 3     |
+| dVRUBIyRAYk  | Places         | 1000309   | 4     |
+| lqbt6X4ZgEI  | Places         | 921593    | 5     |
+| RIH1I1doUI4  | Places         | 879577    | 6     |
+| AlPqL7IUT6M  | Places         | 845180    | 7     |
+| _5QUdvUhCZc  | Places         | 819974    | 8     |
+| m9A_vxIOB-I  | Places         | 677876    | 9     |
+| CL6f3Cyh85w  | Places         | 611786    | 10    |
+| hr23tpWX8lM  | Politics       | 4706030   | 1     |
+| YgW7or1TuFk  | Politics       | 2899397   | 2     |
+| nda_OSWeyn8  | Politics       | 2817078   | 3     |
+| 7SV2sfoPAY8  | Politics       | 2803520   | 4     |
+| HBa9wdOANHw  | Politics       | 2348709   | 5     |
+| xDh_pvv1tUM  | Politics       | 2335060   | 6     |
+| p_YMigZmUuk  | Politics       | 2326680   | 7     |
+| QCVxQ_3Ejkg  | Politics       | 2318782   | 8     |
+| a9WB_PXjTBo  | Politics       | 2310583   | 9     |
+| qSM_3fyiaxM  | Politics       | 2291369   | 10    |
+| Ugrlzm7fySE  | Sports         | 2867888   | 1     |
+| q8t7iSGAKik  | Sports         | 2735003   | 2     |
+| 7vL19q8yL54  | Sports         | 2527713   | 3     |
+| g3dXfFZ6SH0  | Sports         | 2295871   | 4     |
+| P-bWsOK-h98  | Sports         | 2268107   | 5     |
+| HD8f_Qgwc50  | Sports         | 2165475   | 6     |
+| qjWQNwv-GJ4  | Sports         | 2132591   | 7     |
+| eN0V-rJQSHE  | Sports         | 2124653   | 8     |
+| fM38G1450Ew  | Sports         | 2052778   | 9     |
+| 3PGzrfE8rJg  | Sports         | 2013466   | 10    |
+| bNF_P281Uu4  | Travel         | 5231539   | 1     |
+| s5ipz_0uC_U  | Travel         | 1198840   | 2     |
+| 6jJW7aSNCzU  | Travel         | 1143287   | 3     |
+| dVRUBIyRAYk  | Travel         | 1000309   | 4     |
+| lqbt6X4ZgEI  | Travel         | 921593    | 5     |
+| RIH1I1doUI4  | Travel         | 879577    | 6     |
+| AlPqL7IUT6M  | Travel         | 845180    | 7     |
+| _5QUdvUhCZc  | Travel         | 819974    | 8     |
+| m9A_vxIOB-I  | Travel         | 677876    | 9     |
+| CL6f3Cyh85w  | Travel         | 611786    | 10    |
+| aRNzWyD7C9o  | UNA            | 8825788   | 1     |
+| jtExxsiLgPM  | UNA            | 5320895   | 2     |
+| PxNNR4symuE  | UNA            | 4033376   | 3     |
+| 8cjTSvvoddc  | UNA            | 3486368   | 4     |
+| LIhbap3FlGc  | UNA            | 2849832   | 5     |
+| lCSTULqmmYE  | UNA            | 2179562   | 6     |
+| UyTxWvp8upM  | UNA            | 2106933   | 7     |
+| y6oXEWowirI  | UNA            | 1666084   | 8     |
+| _x2-AmY8FI8  | UNA            | 1403113   | 9     |
+| ICoDFooBXpU  | UNA            | 1376215   | 10    |
++--------------+----------------+-----------+-------+--+
+|   videoid    |   categoryid   |   views   | rank  |
++--------------+----------------+-----------+-------+--+
+| RjrEQaG5jPM  | Vehicles       | 2803140   | 1     |
+| cv157ZIInUk  | Vehicles       | 2773979   | 2     |
+| Gyg9U1YaVk8  | Vehicles       | 1832224   | 3     |
+| 6GNB7xT3rNE  | Vehicles       | 1412497   | 4     |
+| tth9krDtxII  | Vehicles       | 1347317   | 5     |
+| 46LQd9dXFRU  | Vehicles       | 1262173   | 6     |
+| pdiuDXwgrjQ  | Vehicles       | 1013697   | 7     |
+| kY_cDpENQLE  | Vehicles       | 956665    | 8     |
+| YtxfbxGz1u4  | Vehicles       | 942604    | 9     |
+| aCamHfJwSGU  | Vehicles       | 847442    | 10    |
++--------------+----------------+-----------+-------+--+
+
